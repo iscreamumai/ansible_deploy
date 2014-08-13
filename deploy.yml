@@ -1,0 +1,13 @@
+- hosts: all
+  roles:
+    - { role: roles/deploy }
+
+  vars:
+    - app_root_path: /apps
+    - mirror_repository_path: "{{ app_root_path }}/repos"
+    - app_repo: "{{ app_root_path }}/releases"
+    - git_location: "git@github.com:hoge/hoge.git"
+    - history_file: "{{ app_root_path }}/history_file.txt"
+    - slack_domain: "hoge.slack.com"
+    - slack_token: "hogehoge"
+    - slack_chan: "#hogehoge"

@@ -1,0 +1,107 @@
+- name: send deploy start message to slack
+  local_action:
+    module: slack
+    domain: "{{ slack_domain }}"
+    token: "{{ slack_token }}"
+    msg: "{{ inventory_hostname }} deploy start"
+    channel: "{{ slack_chan }}"
+    username: "Ansible on {{ inventory_hostname }}"
+    link_names: 0
+    parse: 'none'
+  when: slack_domain != ""
+
+- name: whoami
+  shell: |
+    whoami
+  register: login_user
+
+- name: get version
+  local_action: command date '+%Y%m%d%H%M'
+  register: version_num
+
+- name: check branch
+  shell: |
+    echo {{ deploy_branch }}
+
+- name: copy git-ssh.sh
+  copy: src=git-ssh.sh dest=/tmp/ mode=0777
+
+- name: check mirror repository
+  stat: path={{ mirror_repository_path }}
+  register: check_mirror_path
+
+- name: git fetch mirror repository
+  when: check_mirror_path.stat.exists
+  shell: |
+      cd {{ mirror_repository_path }} &&
+      GIT_ASKPASS=/bin/echo GIT_SSH=/tmp/git-ssh.sh /usr/bin/env git remote prune origin &&
+      GIT_ASKPASS=/bin/echo GIT_SSH=/tmp/git-ssh.sh /usr/bin/env git fetch -q
+
+- name: git clone mirror repository
+  when: check_mirror_path.stat.exists == false
+  shell: |
+      cd {{ app_root_path }} &&
+      GIT_ASKPASS=/bin/echo GIT_SSH=/tmp/git-ssh.sh /usr/bin/env git clone --mirror {{ git_location }} {{ mirror_repository_path }}
+
+- name: change repo owner
+  when: check_mirror_path.stat.exists == false
+  sudo: yes
+  shell: |
+    chown -R beam:beam {{ mirror_repository_path }}
+
+- name: update repo
+  when: check_mirror_path.stat.exists
+  shell: |
+    cd {{ mirror_repository_path }} &&
+    GIT_ASKPASS=/bin/echo GIT_SSH=/tmp/beam-setting/git-ssh.sh /usr/bin/env git remote update
+
+- name: mkdir version directory
+  sudo: yes
+  sudo_user: beam
+  shell: |
+    mkdir -p {{ app_repo }}/{{ version_num.stdout }} -m 775
+
+
+- name: git clone from mirror
+  shell: |
+    cd {{ mirror_repository_path }} &&
+    GIT_ASKPASS=/bin/echo GIT_SSH=/tmp/beam-setting/git-ssh.sh git archive {{ deploy_branch }} | tar -x -C {{ app_repo }}/{{ version_num.stdout }}
+
+- name: get revision id
+  sudo: yes
+  sudo_user: beam
+  shell: |
+      cd {{ mirror_repository_path }} &&
+      GIT_ASKPASS=/bin/echo GIT_SSH=/tmp/git-ssh.sh git rev-parse {{ deploy_branch }}
+  register: head_id
+
+- name: edit history file
+  sudo: yes
+  sudo_user: beam
+  action: shell echo {{ version_num.stdout }} {{ head_id.stdout  }} >> {{ history_file }}
+
+- name: delete symlink and make new symlink
+  sudo: yes
+  sudo_user: beam
+  shell: |
+    rm {{ app_root_path }}/current &&
+    ln -sF {{ app_repo }}/{{ version_num.stdout }} {{ app_root_path }}/current
+  when: symlink.stat.exists
+
+- name: Keep a recent  2 release directories and remove old release directories
+  sudo: yes
+  shell: |
+    cd {{ app_root_path }}/releases
+    ls -1F | grep '/$' | sort | head -n -2 | xargs rm -rf
+
+- name: send deploy end message to slack
+  local_action:
+    module: slack
+    domain: "{{ slack_domain }}"
+    token: "{{ slack_token }}"
+    msg: "{{ inventory_hostname }} deploy end"
+    channel: "{{ slack_chan }}"
+    username: "Ansible on {{ inventory_hostname }}"
+    link_names: 0
+    parse: 'none'
+  when: slack_domain != ""
